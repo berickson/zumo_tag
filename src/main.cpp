@@ -34,22 +34,52 @@ Zumo32U4ButtonA buttonA;
 Zumo32U4Motors motors;
 Zumo32U4Encoders encoders;
 Zumo32U4ProximitySensors proximity_sensors;
+Zumo32U4LineSensors line_sensors;
 
 L3G gyro;
+
+void loadCustomCharacters()
+{
+  static const char levels[] PROGMEM = {
+    0, 0, 0, 0, 0, 0, 0, 63, 63, 63, 63, 63, 63, 63
+  };
+  lcd.loadCustomCharacter(levels + 0, 0);  // 1 bar
+  lcd.loadCustomCharacter(levels + 1, 1);  // 2 bars
+  lcd.loadCustomCharacter(levels + 2, 2);  // 3 bars
+  lcd.loadCustomCharacter(levels + 3, 3);  // 4 bars
+  lcd.loadCustomCharacter(levels + 4, 4);  // 5 bars
+  lcd.loadCustomCharacter(levels + 5, 5);  // 6 bars
+  lcd.loadCustomCharacter(levels + 6, 6);  // 7 bars
+}
+
+TurnSensor turn_sensor(&buttonA, &lcd, &gyro);
 
 unsigned long start_millis;
 void setup()
 {
+  proximity_sensors.initThreeSensors();
+  line_sensors.initThreeSensors();
   encoders.init();
-  turnSensorSetup();
+  turn_sensor.init();
+  turn_sensor.calibrate();
+
   delay(500);
-  turnSensorReset();
+  turn_sensor.reset();
+
+  loadCustomCharacters();
 
   lcd.clear();
   lcd.print(F("Try to"));
   lcd.gotoXY(0, 1);
   lcd.print(F("turn me!"));
   start_millis = millis();
+}
+
+void printBar(uint8_t height)
+{
+  if (height > 8) { height = 8; }
+  const char barChars[] = {' ', 0, 1, 2, 3, 4, 5, 6, (char)255};
+  lcd.print(barChars[height]);
 }
 
 bool every_n_ms(unsigned long last_loop_ms, unsigned long loop_ms, unsigned long ms) {
@@ -69,29 +99,22 @@ void loop()
 
 
   int clock_seconds= (loop_ms-start_millis)/1000;//%60;
-  int clock_degrees = -clock_seconds*360/60;
+  float clock_radians = -clock_seconds*360/60*M_PI/180;
   
   // Read the gyro to update turnAngle, the estimation of how far
   // the robot has turned, and turnRate, the estimation of how
   // fast it is turning.
-  turnSensorUpdate();
+  turn_sensor.update();
 
   // Calculate the motor turn speed using proportional and
   // derivative PID terms.  Here we are a using a proportional
   // constant of p and a derivative constant of d.
-  float p = 30;
-  float d = .06;
-  const float turn_to_radians = 2. * M_PI / 180. / turnAngle1;
-  float turn_radians = turnAngle * turn_to_radians;
-  float turn_degrees = float(turnAngle) / float(turnAngle1);
-  float p_error = clock_degrees - turn_degrees;
-  while(p_error>180) {
-    p_error -= 180;
-  }
-  while(p_error<-180) {
-    p_error += 180;
-  }
-  float d_error = -turnRate;
+  float p = 1000;
+  float d = 30;
+  float turn_radians = turn_sensor.get_yaw_radians();
+
+  float p_error = clock_radians - turn_radians;
+  float d_error = -turn_sensor.get_yaw_radians_per_second();
   float turnSpeed = p*p_error+d*d_error;
 
 
@@ -111,16 +134,33 @@ void loop()
   if(every_n_ms(last_loop_ms, loop_ms, 1000)) {
     Serial.print("loop count: ");
     Serial.println(loop_count);
+  }
 
+  if(every_n_ms(last_loop_ms, loop_ms, 1000)) {
+    Serial.print("L: ");
+    Serial.print(proximity_sensors.readBasicLeft());
+    Serial.print(" R: ");
+    Serial.print(proximity_sensors.readBasicRight());
   }
 
   if(every_n_ms(last_loop_ms, loop_ms, 100)) {
-    lcd.clear();
-    lcd.print("X ");
-    lcd.print(position_x);
+    proximity_sensors.read();
+
+    lcd.gotoXY(0, 0);
+    printBar(proximity_sensors.countsLeftWithLeftLeds());
+    printBar(proximity_sensors.countsLeftWithRightLeds());
+    printBar(proximity_sensors.countsFrontWithLeftLeds());
+    printBar(proximity_sensors.countsFrontWithRightLeds());
+    printBar(proximity_sensors.countsRightWithLeftLeds());
+    printBar(proximity_sensors.countsRightWithRightLeds());
     lcd.gotoXY(0, 1);
-    lcd.print("Y ");
-    lcd.print(position_y);
+    for(int led=0;led<5;led++) {
+      printBar(proximity_sensors.countsWithLeftLeds(led));
+      printBar(proximity_sensors.countsWithLeftLeds(led));
+    }
+    Serial.print("turn_degrees: ");
+    Serial.println(turn_radians*180/M_PI);
+
   }
 
 
@@ -130,7 +170,8 @@ void loop()
 
   
 
-  //motors.setSpeeds(-turnSpeed, turnSpeed);
+  motors.setSpeeds(-turnSpeed, turnSpeed);
   last_loop_ms = loop_ms;
 }
+
 

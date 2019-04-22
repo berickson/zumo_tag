@@ -6,23 +6,36 @@ measure how much the robot has turned about its Z axis. */
 
 #include <Zumo32U4.h>
 
-// This constant represents a turn of 45 degrees.
-const int32_t turnAngle45 = 0x20000000;
 
-// This constant represents a turn of 90 degrees.
-const int32_t turnAngle90 = turnAngle45 * 2;
 
-// This constant represents a turn of approximately 1 degree.
-const int32_t turnAngle1 = (turnAngle45 + 22) / 45;
+class TurnSensor {
+public: 
+    TurnSensor(
+        Pushbutton * button,
+        Zumo32U4LCD * lcd,
+        L3G * gyro) :
+        button(*button),
+        lcd(*lcd),
+        gyro(*gyro) 
+        {}
 
-// These are defined in TurnSensor.cpp:
-void turnSensorSetup();
-void turnSensorReset();
-void turnSensorUpdate();
-extern int32_t turnAngle;
-extern float turnRate;
+    void init();
+    void calibrate();
+    void reset();
+    void update();
 
-// These objects must be defined in your sketch.
-extern Zumo32U4ButtonA buttonA;
-extern Zumo32U4LCD lcd;
-extern L3G gyro;
+
+    float get_yaw_radians();
+    float get_yaw_radians_per_second();
+
+private:
+    float yaw_radians_per_second = 0;
+    float yaw_radians = 0;
+    float yaw_zero_offset = 0;
+    unsigned long last_update_us = 0;
+
+    Pushbutton & button;
+    Zumo32U4LCD & lcd;
+    L3G & gyro;
+
+};
