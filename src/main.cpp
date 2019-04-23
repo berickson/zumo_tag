@@ -130,6 +130,7 @@ void setup()
         turn_sensor.calibrate();
         config.gyro_cal = turn_sensor.get_calibration();
         config.save();
+        turn_sensor.reset();
     }
     if(buttonA.getSingleDebouncedRelease()) {
       break;
