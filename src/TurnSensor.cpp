@@ -33,12 +33,6 @@ void TurnSensor::init()
 void TurnSensor::calibrate()
 {
   lcd.clear();
-  lcd.print(F("a: start"));
-  while(!button.getSingleDebouncedRelease()) {
-  }
-
-
-  lcd.clear();
   lcd.print(F("Gyro cal"));
 
   // Turn on the yellow LED in case the LCD is not available.
@@ -49,7 +43,7 @@ void TurnSensor::calibrate()
 
   // Calibrate the gyro.
   int32_t total = 0;
-  const unsigned long cal_millis = 3000;
+  const unsigned long cal_millis = 10000;
   unsigned long cal_start = millis();
   unsigned long n_samples = 0;
   while(millis() - cal_start < cal_millis)
@@ -68,22 +62,6 @@ void TurnSensor::calibrate()
   Serial.println(n_samples);
   Serial.print("yaw_zero_offset: ");
   Serial.println(yaw_zero_offset);
-
-
-  // Display the angle (in degrees from -180 to 180) until the
-  // user presses A.
-  lcd.clear();
-  this->reset();
-  while (!button.getSingleDebouncedRelease())
-  {
-    this->update();
-    lcd.gotoXY(0, 0);
-    lcd.print(get_yaw_radians()*180/M_PI);
-    lcd.print("deg");
-    lcd.gotoXY(0,1);
-    lcd.print("a: go");
-  }
-  lcd.clear();
 }
 
 // This should be called to set the starting point for measuring

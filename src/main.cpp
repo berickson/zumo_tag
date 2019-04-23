@@ -1,3 +1,5 @@
+#include <EEPROM.h>
+
 /* This demo shows how the Zumo can use its gyroscope to detect
 when it is being rotated, and use the motors to resist that
 rotation.
@@ -31,6 +33,7 @@ const int16_t maxSpeed = 400;
 
 Zumo32U4LCD lcd;
 Zumo32U4ButtonA buttonA;
+Zumo32U4ButtonB buttonB;
 Zumo32U4Motors motors;
 Zumo32U4Encoders encoders;
 Zumo32U4ProximitySensors proximity_sensors;
@@ -55,22 +58,87 @@ void loadCustomCharacters()
 
 TurnSensor turn_sensor(&buttonA, &lcd, &gyro);
 
-unsigned long start_millis;
+
+struct Config {
+public:
+  // Denotes config version
+  // Change every time you change this struct
+  const uint32_t magic = 0xa719; 
+  float gyro_cal = 0;
+  
+  void load() {
+    Serial.println("Reading config");
+    uint32_t stored_magic = 0;
+    int address = 0;
+    EEPROM.get(address, stored_magic);
+    address += sizeof(stored_magic);
+    Serial.print("read magic");
+    Serial.print(stored_magic);
+    Serial.println();
+    if(stored_magic == magic) {
+      Serial.println("magic matched");
+      EEPROM.get(address, gyro_cal);
+    }
+    Serial.print("gyro_cal: ");
+    Serial.print(gyro_cal);
+    Serial.println();
+  }
+
+  void save() {
+    Serial.println("Writing config");
+    int address = 0;
+    EEPROM.put(address, magic);
+    address+= sizeof(magic);
+    EEPROM.put(address, gyro_cal);
+
+    Serial.print("gyro_cal: ");
+    Serial.print(gyro_cal);
+    Serial.println();
+  }
+};
+
+Config config;
+
 void setup()
 {
+  lcd.print("setup");
+  config.load();
   proximity_sensors.initThreeSensors();
   line_sensors.initThreeSensors();
   encoders.init();
   turn_sensor.init();
+  turn_sensor.reset();
+  turn_sensor.set_calibration(config.gyro_cal);
+  Serial.println(config.gyro_cal);
 
+  lcd.clear();
+  lcd.print("set2");
   loadCustomCharacters();
 
-  turn_sensor.calibrate();
+  // Display the angle (in degrees from -180 to 180) until the
+  // user presses A.
+  lcd.clear();
+  while (true)
+  {
+    turn_sensor.update();
+    lcd.gotoXY(0, 0);
+    lcd.print(turn_sensor.get_yaw_radians()*180/M_PI);
+    lcd.print("deg  ");
+    lcd.gotoXY(0,1);
+    lcd.print("go,cal");
+    if(buttonB.getSingleDebouncedRelease()) {
+        turn_sensor.calibrate();
+        config.gyro_cal = turn_sensor.get_calibration();
+        config.save();
+    }
+    if(buttonA.getSingleDebouncedRelease()) {
+      break;
+    }
+  }
+  lcd.clear();
+
 
   turn_sensor.reset();
-
-
-  start_millis = millis();
 }
 
 void printBar(uint8_t height)

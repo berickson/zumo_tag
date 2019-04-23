@@ -28,6 +28,15 @@ public:
     float get_yaw_radians();
     float get_yaw_radians_per_second();
 
+    float get_calibration() {
+        return yaw_zero_offset;
+    }
+
+    void set_calibration(float yaw_zero_offset) {
+        this->yaw_zero_offset = yaw_zero_offset;
+    }
+
+
 private:
     float yaw_radians_per_second = 0;
     float yaw_radians = 0;
