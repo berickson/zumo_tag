@@ -35,6 +35,7 @@ Zumo32U4Motors motors;
 Zumo32U4Encoders encoders;
 Zumo32U4ProximitySensors proximity_sensors;
 Zumo32U4LineSensors line_sensors;
+Zumo32U4Buzzer buzzer;
 
 L3G gyro;
 
@@ -61,17 +62,14 @@ void setup()
   line_sensors.initThreeSensors();
   encoders.init();
   turn_sensor.init();
-  turn_sensor.calibrate();
-
-  delay(500);
-  turn_sensor.reset();
 
   loadCustomCharacters();
 
-  lcd.clear();
-  lcd.print(F("Try to"));
-  lcd.gotoXY(0, 1);
-  lcd.print(F("turn me!"));
+  turn_sensor.calibrate();
+
+  turn_sensor.reset();
+
+
   start_millis = millis();
 }
 
@@ -86,50 +84,212 @@ bool every_n_ms(unsigned long last_loop_ms, unsigned long loop_ms, unsigned long
   return (last_loop_ms % ms) + (loop_ms - last_loop_ms) >= ms;
 }
 
+class Pose {
+public:
+  void update() {
+    float yaw_radians = turn_sensor.get_yaw_radians();
+      const float meters_per_encoder_tick = 280./2112000;
+    float ds = (encoders.getCountsAndResetLeft()+encoders.getCountsAndResetRight())*meters_per_encoder_tick/2;
+    if(ds!=0) {
+      Serial.print("dsmm:");
+      Serial.println(ds*1000);
+      Serial.print("yaw radians:");
+      Serial.println(yaw_radians);
+      
+      Serial.println(ds*1000);
+      this->x += ds * cos(yaw_radians);
+      this->y += ds * sin(yaw_radians);
+    }
+  }
+
+  float get_yaw_radians() {
+    return turn_sensor.get_yaw_radians();
+  }
+
+  float get_yaw_radians_per_second() {
+    return turn_sensor.get_yaw_radians_per_second();
+  }
+
+
+  float x = 0;
+  float y = 0;
+} pose;
+
+
+double standardized_radians(double theta) {
+  return fmod((theta + 3 * M_PI), 2*M_PI) - M_PI;
+}
+
+class RobotController {
+private:
+  float goal_x = NAN;
+  float goal_y = NAN;
+  float goal_yaw = NAN;
+  float goal_distance = NAN;
+
+  const float goal_tolerance_meters = 0.03;
+  const float turn_angle_tolerance = 5 * M_PI / 180;
+  const float zero_angle_velocity_tolerance = 20 * M_PI / 180;
+
+  struct R_Theta {
+    float r;
+    float theta;
+  };
+
+  void calculate_goal_yaw_and_distance() {
+    float dx = goal_x - pose.x;
+    float dy = goal_y - pose.y;
+    goal_distance = sqrt(dx*dx+dy*dy);
+    goal_yaw =  atan2(dy,dx);
+  }
+
+  bool turn_is_complete() {
+    return 
+        fabs(pose.get_yaw_radians_per_second()) < zero_angle_velocity_tolerance 
+        && fabs(pose.get_yaw_radians() - goal_yaw) < turn_angle_tolerance;
+  }
+
+  
+
+  void execute_move() {
+    calculate_goal_yaw_and_distance();
+
+    if(goal_distance < goal_tolerance_meters) {
+      motors.setSpeeds(0,0);
+      mode = idle;
+      return;
+    }
+    float max_speed = 400;
+    float min_speed = 100;
+
+    double yaw_setpoint = goal_yaw;
+    double speed_setpoint = min_speed+goal_distance * max_speed / 0.15; // max speed at 5 cm
+
+    double yaw_error = standardized_radians(yaw_setpoint - pose.get_yaw_radians());
+
+    int left_speed = constrain(speed_setpoint - 1000 * yaw_error,-max_speed,max_speed);
+    int right_speed = constrain(speed_setpoint + 1000 * yaw_error,-max_speed,max_speed);
+    
+    motors.setSpeeds(left_speed, right_speed);
+    // buzzer.playNote(57, 500, 10);
+  }
+
+  void execute_turn() {
+    float p = 500;
+    float d = 30;
+    float yaw_radians = pose.get_yaw_radians();
+
+    float p_error = goal_yaw - yaw_radians;
+    float d_error = -pose.get_yaw_radians_per_second();
+    float turnSpeed = p*p_error+d*d_error;
+    turnSpeed = constrain(turnSpeed, -maxSpeed, maxSpeed);
+
+    motors.setSpeeds(-turnSpeed, turnSpeed);
+  }
+
+  void execute_idle() {
+    motors.setSpeeds(0, 0);
+
+  }
+
+public:
+  enum Mode {
+    idle,
+    turning_before_move,
+    moving,
+    turning
+  } mode;
+
+  void set_position_goal(float goal_x, float goal_y) {
+    this->goal_x = goal_x;
+    this->goal_y = goal_y;
+    mode = turning_before_move;
+  }
+
+  void set_yaw_goal(float yaw_goal) {
+    this->goal_yaw = goal_yaw;
+    mode = turning;
+  }
+
+  void execute() {
+    if(mode == moving) {
+      execute_move();
+    } else if (mode == turning) {
+      execute_turn();
+    } else if (mode == turning_before_move) {
+      calculate_goal_yaw_and_distance();
+      if(turn_is_complete()) {
+        // buzzer.playNote(57, 500, 10);
+        mode = moving;
+      } else {
+        execute_turn();
+      }
+    } else {
+      execute_idle();
+    }
+  }
+
+  float yaw_goal;
+};
+
+RobotController robot;
+
+float random_float(float min, float max)
+{
+    float random = ((float) rand()) / (float) RAND_MAX;
+    float range = max - min;  
+    return (random*range) + min;
+}
+
+
+void show_sensor_bars() {
+    lcd.gotoXY(0, 0);
+    printBar(proximity_sensors.countsLeftWithLeftLeds());
+    printBar(proximity_sensors.countsLeftWithRightLeds());
+    printBar(proximity_sensors.countsFrontWithLeftLeds());
+    printBar(proximity_sensors.countsFrontWithRightLeds());
+    printBar(proximity_sensors.countsRightWithLeftLeds());
+    printBar(proximity_sensors.countsRightWithRightLeds());
+    lcd.gotoXY(0, 1);
+    for(int led=0;led<5;led++) {
+      printBar(proximity_sensors.countsWithLeftLeds(led));
+      printBar(proximity_sensors.countsWithLeftLeds(led));
+    }
+    Serial.print("turn_degrees: ");
+    Serial.println(pose.get_yaw_radians()*180/M_PI);
+}
+
 void loop()
 {
-  static float position_x = 0;
-  static float position_y = 0;
+  static enum LoopMode {
+    start, moving_to_point, chasing
+  } loop_mode = start;
 
-  const float meters_per_encoder_tick = 280./2112000;
   static unsigned long loop_count = 0;
   static unsigned long last_loop_ms = 0;
   ++loop_count;
   unsigned long loop_ms = millis();
 
-
-  int clock_seconds= (loop_ms-start_millis)/1000;//%60;
-  float clock_radians = -clock_seconds*360/60*M_PI/180;
-  
-  // Read the gyro to update turnAngle, the estimation of how far
-  // the robot has turned, and turnRate, the estimation of how
-  // fast it is turning.
+  // sense  
   turn_sensor.update();
+  proximity_sensors.read();
+  pose.update();
 
-  // Calculate the motor turn speed using proportional and
-  // derivative PID terms.  Here we are a using a proportional
-  // constant of p and a derivative constant of d.
-  float p = 1000;
-  float d = 30;
-  float turn_radians = turn_sensor.get_yaw_radians();
-
-  float p_error = clock_radians - turn_radians;
-  float d_error = -turn_sensor.get_yaw_radians_per_second();
-  float turnSpeed = p*p_error+d*d_error;
-
-
-  // update position
-  float ds = (encoders.getCountsAndResetLeft()+encoders.getCountsAndResetRight())*meters_per_encoder_tick/2;
-  if(ds!=0) {
-    Serial.print("dsmm:");
-    Serial.println(ds*1000);
-    Serial.print("yaw radians:");
-    Serial.println(turn_radians);
-    
-    Serial.println(ds*1000);
-    position_x += ds * cos(turn_radians);
-    position_y += ds * sin(turn_radians);
+  switch(loop_mode) {
+    case start:
+      robot.set_position_goal(0.33,.33);
+      loop_mode = moving_to_point;
+      break;
+    case moving_to_point:
+      if(robot.mode == RobotController::Mode::idle) {
+        robot.set_position_goal(random_float(0,1),random_float(0,1));
+        loop_mode = moving_to_point;
+      }
   }
+
+
+
+  robot.execute();
 
   if(every_n_ms(last_loop_ms, loop_ms, 1000)) {
     Serial.print("loop count: ");
@@ -144,33 +304,13 @@ void loop()
   }
 
   if(every_n_ms(last_loop_ms, loop_ms, 100)) {
-    proximity_sensors.read();
 
-    lcd.gotoXY(0, 0);
-    printBar(proximity_sensors.countsLeftWithLeftLeds());
-    printBar(proximity_sensors.countsLeftWithRightLeds());
-    printBar(proximity_sensors.countsFrontWithLeftLeds());
-    printBar(proximity_sensors.countsFrontWithRightLeds());
-    printBar(proximity_sensors.countsRightWithLeftLeds());
-    printBar(proximity_sensors.countsRightWithRightLeds());
-    lcd.gotoXY(0, 1);
-    for(int led=0;led<5;led++) {
-      printBar(proximity_sensors.countsWithLeftLeds(led));
-      printBar(proximity_sensors.countsWithLeftLeds(led));
-    }
-    Serial.print("turn_degrees: ");
-    Serial.println(turn_radians*180/M_PI);
-
+    lcd.clear();
+    lcd.print(pose.x);
+    lcd.gotoXY(0,1);
+    lcd.print(pose.y);
   }
 
-
-  // Constrain our motor speeds to be between
-  // -maxSpeed and maxSpeed.
-  turnSpeed = constrain(turnSpeed, -maxSpeed, maxSpeed);
-
-  
-
-  motors.setSpeeds(-turnSpeed, turnSpeed);
   last_loop_ms = loop_ms;
 }
 

@@ -79,7 +79,7 @@ void TurnSensor::calibrate()
     this->update();
     lcd.gotoXY(0, 0);
     lcd.print(get_yaw_radians()*180/M_PI);
-    lcd.print(F("deg"));
+    lcd.print("deg");
     lcd.gotoXY(0,1);
     lcd.print("a: go");
   }
