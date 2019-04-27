@@ -26,10 +26,24 @@ it down facing in a new position. */
 #include <Zumo32U4.h>
 #include "TurnSensor.h"
 
+
+
+
 // This is the maximum speed the motors will be allowed to turn.
 // A maxSpeed of 400 lets the motors go at top speed.  Decrease
 // this value to impose a speed limit.
 const int16_t maxSpeed = 400;
+
+
+
+const float feet_to_meters = 0.3048;
+const float arena_width = 3 * feet_to_meters;
+const float arena_height = 3 * feet_to_meters;
+const float robot_diameter = 0.05; // for cushion, easiest to consider robot is circular even though it isn't
+float arena_min_x = -arena_width/2 + robot_diameter;
+float arena_max_x = arena_width/2 - robot_diameter;
+float arena_min_y = -arena_width/2 + robot_diameter;
+float arena_max_y = arena_width/2 - robot_diameter;
 
 Zumo32U4LCD lcd;
 Zumo32U4ButtonA buttonA;
@@ -67,49 +81,71 @@ public:
   float gyro_cal = 0;
   
   void load() {
-    Serial.println("Reading config");
     uint32_t stored_magic = 0;
     int address = 0;
     EEPROM.get(address, stored_magic);
     address += sizeof(stored_magic);
-    Serial.print("read magic");
-    Serial.print(stored_magic);
-    Serial.println();
     if(stored_magic == magic) {
-      Serial.println("magic matched");
       EEPROM.get(address, gyro_cal);
     }
-    Serial.print("gyro_cal: ");
-    Serial.print(gyro_cal);
-    Serial.println();
   }
 
   void save() {
-    Serial.println("Writing config");
     int address = 0;
     EEPROM.put(address, magic);
     address+= sizeof(magic);
     EEPROM.put(address, gyro_cal);
-
-    Serial.print("gyro_cal: ");
-    Serial.print(gyro_cal);
-    Serial.println();
   }
 };
 
 Config config;
 
+class Pose {
+public:
+  void update() {
+    float yaw_radians = turn_sensor.get_yaw_radians();
+      const float meters_per_encoder_tick = 280./2112000;
+    float ds = (encoders.getCountsAndResetLeft()+encoders.getCountsAndResetRight())*meters_per_encoder_tick/2;
+    if(ds!=0) {
+      this->x += ds * cos(yaw_radians);
+      this->y += ds * sin(yaw_radians);
+    }
+  }
+
+  float get_yaw_radians() {
+    return turn_sensor.get_yaw_radians();
+  }
+
+  float get_yaw_radians_per_second() {
+    return turn_sensor.get_yaw_radians_per_second();
+  }
+
+  void set_start_pose() {
+    x = arena_max_x;
+    y = arena_min_y;
+    turn_sensor.reset();
+  }
+
+
+  float x = 0;
+  float y = 0;
+} pose;
+
+
+const int line_count=5;
 void setup()
 {
   lcd.print("setup");
   config.load();
   proximity_sensors.initThreeSensors();
+
   line_sensors.initThreeSensors();
+
+  //line_sensors.initThreeSensors();
   encoders.init();
   turn_sensor.init();
   turn_sensor.reset();
   turn_sensor.set_calibration(config.gyro_cal);
-  Serial.println(config.gyro_cal);
 
   lcd.clear();
   lcd.print("set2");
@@ -139,7 +175,7 @@ void setup()
   lcd.clear();
 
 
-  turn_sensor.reset();
+  pose.set_start_pose();
 }
 
 void printBar(uint8_t height)
@@ -153,36 +189,6 @@ bool every_n_ms(unsigned long last_loop_ms, unsigned long loop_ms, unsigned long
   return (last_loop_ms % ms) + (loop_ms - last_loop_ms) >= ms;
 }
 
-class Pose {
-public:
-  void update() {
-    float yaw_radians = turn_sensor.get_yaw_radians();
-      const float meters_per_encoder_tick = 280./2112000;
-    float ds = (encoders.getCountsAndResetLeft()+encoders.getCountsAndResetRight())*meters_per_encoder_tick/2;
-    if(ds!=0) {
-      Serial.print("dsmm:");
-      Serial.println(ds*1000);
-      Serial.print("yaw radians:");
-      Serial.println(yaw_radians);
-      
-      Serial.println(ds*1000);
-      this->x += ds * cos(yaw_radians);
-      this->y += ds * sin(yaw_radians);
-    }
-  }
-
-  float get_yaw_radians() {
-    return turn_sensor.get_yaw_radians();
-  }
-
-  float get_yaw_radians_per_second() {
-    return turn_sensor.get_yaw_radians_per_second();
-  }
-
-
-  float x = 0;
-  float y = 0;
-} pose;
 
 
 double standardized_radians(double theta) {
@@ -196,6 +202,8 @@ private:
   float goal_yaw = NAN;
   float goal_distance = NAN;
 
+  const float max_speed = 400;
+  const float min_speed = 100;
   const float goal_tolerance_meters = 0.03;
   const float turn_angle_tolerance = 5 * M_PI / 180;
   const float zero_angle_velocity_tolerance = 20 * M_PI / 180;
@@ -228,8 +236,6 @@ private:
       mode = idle;
       return;
     }
-    float max_speed = 400;
-    float min_speed = 100;
 
     double yaw_setpoint = goal_yaw;
     double speed_setpoint = min_speed+goal_distance * max_speed / 0.15; // max speed at 5 cm
@@ -252,6 +258,12 @@ private:
     float d_error = -pose.get_yaw_radians_per_second();
     float turnSpeed = p*p_error+d*d_error;
     turnSpeed = constrain(turnSpeed, -maxSpeed, maxSpeed);
+    /*
+    lcd.clear();
+    lcd.print(yaw_radians);
+    lcd.gotoXY(0,1);
+    lcd.print(goal_yaw);
+    */
 
     motors.setSpeeds(-turnSpeed, turnSpeed);
   }
@@ -266,8 +278,21 @@ public:
     idle,
     turning_before_move,
     moving,
-    turning
+    turning,
+    chasing
   } mode;
+
+  void chase(int8_t direction) {
+    mode = chasing;
+    if(direction == 0) {
+      motors.setSpeeds(max_speed, max_speed);
+    } else if(direction == -1) {
+      motors.setSpeeds(0, max_speed);
+    }
+    else if(direction == 1) {
+      motors.setSpeeds(max_speed, 0);
+    }
+  }
 
   void set_position_goal(float goal_x, float goal_y) {
     this->goal_x = goal_x;
@@ -275,16 +300,21 @@ public:
     mode = turning_before_move;
   }
 
-  void set_yaw_goal(float yaw_goal) {
+  void set_yaw_goal(float goal_yaw) {
     this->goal_yaw = goal_yaw;
     mode = turning;
   }
 
   void execute() {
+
     if(mode == moving) {
       execute_move();
     } else if (mode == turning) {
       execute_turn();
+      calculate_goal_yaw_and_distance();
+      if(turn_is_complete()) {
+        mode = idle;
+      }
     } else if (mode == turning_before_move) {
       calculate_goal_yaw_and_distance();
       if(turn_is_complete()) {
@@ -293,6 +323,8 @@ public:
       } else {
         execute_turn();
       }
+    } else if (mode == chasing)  {
+      // continue chasing
     } else {
       execute_idle();
     }
@@ -310,7 +342,6 @@ float random_float(float min, float max)
     return (random*range) + min;
 }
 
-
 void show_sensor_bars() {
     lcd.gotoXY(0, 0);
     printBar(proximity_sensors.countsLeftWithLeftLeds());
@@ -322,38 +353,120 @@ void show_sensor_bars() {
     lcd.gotoXY(0, 1);
     for(int led=0;led<5;led++) {
       printBar(proximity_sensors.countsWithLeftLeds(led));
-      printBar(proximity_sensors.countsWithLeftLeds(led));
+      printBar(proximity_sensors.countsWithRightLeds(led));
     }
-    Serial.print("turn_degrees: ");
-    Serial.println(pose.get_yaw_radians()*180/M_PI);
+
 }
+
+void show_pose() {
+    lcd.clear();
+    lcd.print(pose.x);
+    lcd.gotoXY(0,1);
+    lcd.print(pose.y);
+}
+
 
 void loop()
 {
   static enum LoopMode {
-    start, moving_to_point, chasing
+    start, rush_to_center, sweep_scan, moving_to_point, chasing, done
   } loop_mode = start;
+
+  static enum ObstacleDetected {
+    no_obstacle, obstacle_ahead, obstacle_right, obstacle_left
+  } obstacle_status;
 
   static unsigned long loop_count = 0;
   static unsigned long last_loop_ms = 0;
+  static bool look_for_targets = false;
+
   ++loop_count;
   unsigned long loop_ms = millis();
+  
 
   // sense  
   turn_sensor.update();
-  proximity_sensors.read();
+
+  unsigned int line_readings[line_count];
+  line_sensors.read(line_readings);
+
+
+  proximity_sensors.read(); 
+  {
+    uint8_t left = proximity_sensors.countsFrontWithLeftLeds();
+    uint8_t right = proximity_sensors.countsFrontWithRightLeds();
+
+    uint8_t sum = left+right;
+    int8_t diff = right-left;
+
+
+    if(sum<4) {
+      obstacle_status = no_obstacle;
+    } else {
+      if (diff < 0) {
+        obstacle_status = obstacle_left;
+      } else if (diff > 0) {
+        obstacle_status = obstacle_right;
+      } else {
+        obstacle_status = obstacle_ahead;
+      }
+    }
+  }
   pose.update();
 
+  // only left and center lines work,  
+  bool left_line_sensed = line_readings[0] > 400;
+  bool center_line_sensed = line_readings[1] > 400;
+  if(left_line_sensed) {
+    buzzer.playNote(55,100,13);
+  }
+  if(center_line_sensed) {
+    buzzer.playNote(60,100,13);
+  }
+
+  if(look_for_targets && (obstacle_status != no_obstacle)) {
+    loop_mode = chasing;
+  }
   switch(loop_mode) {
     case start:
-      robot.set_position_goal(0.33,.33);
-      loop_mode = moving_to_point;
+      look_for_targets = false;
+      robot.set_position_goal(0.,0.);
+      loop_mode = rush_to_center;
       break;
-    case moving_to_point:
-      if(robot.mode == RobotController::Mode::idle) {
-        robot.set_position_goal(random_float(0,1),random_float(0,1));
+
+    case chasing:
+      if(obstacle_status == obstacle_ahead) {
+        robot.chase(0);
+      } else if (obstacle_status == obstacle_left) {
+        robot.chase(-1);
+      } else if (obstacle_status == obstacle_right) {
+        robot.chase(1);
+      }
+      break;
+
+    case rush_to_center:
+      if( robot.mode == RobotController::Mode::idle ) {
+        robot.set_yaw_goal(pose.get_yaw_radians()+M_PI*2);
+        loop_mode = sweep_scan;
+        look_for_targets = true;
+      }
+      break;
+    
+    case sweep_scan:
+      if(robot.mode == RobotController::Mode::idle)  {
         loop_mode = moving_to_point;
       }
+      break;
+    
+    case moving_to_point:
+      if(robot.mode == RobotController::Mode::idle) {
+        robot.set_position_goal(random_float(arena_min_x,arena_max_x),random_float(arena_min_y,arena_max_y));
+        loop_mode = moving_to_point;
+      }
+      break;
+
+    case done:
+      break;
   }
 
 
@@ -362,22 +475,19 @@ void loop()
 
   if(every_n_ms(last_loop_ms, loop_ms, 1000)) {
     Serial.print("loop count: ");
-    Serial.println(loop_count);
+    Serial.print(loop_count);
+    Serial.print(" down sensors L:");
+    Serial.print(line_readings[0]);
+    Serial.print(" C:");
+    Serial.print(line_readings[1]);
+
+    Serial.println();
   }
 
-  if(every_n_ms(last_loop_ms, loop_ms, 1000)) {
-    Serial.print("L: ");
-    Serial.print(proximity_sensors.readBasicLeft());
-    Serial.print(" R: ");
-    Serial.print(proximity_sensors.readBasicRight());
-  }
 
+  // print status on led
   if(every_n_ms(last_loop_ms, loop_ms, 100)) {
-
-    lcd.clear();
-    lcd.print(pose.x);
-    lcd.gotoXY(0,1);
-    lcd.print(pose.y);
+    show_sensor_bars();
   }
 
   last_loop_ms = loop_ms;
