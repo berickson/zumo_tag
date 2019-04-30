@@ -40,10 +40,10 @@ const float feet_to_meters = 0.3048;
 const float arena_width = 3 * feet_to_meters;
 const float arena_height = 3 * feet_to_meters;
 const float robot_diameter = 0.05; // for cushion, easiest to consider robot is circular even though it isn't
-float arena_min_x = -arena_width/2 + robot_diameter;
-float arena_max_x = arena_width/2 - robot_diameter;
-float arena_min_y = -arena_width/2 + robot_diameter;
-float arena_max_y = arena_width/2 - robot_diameter;
+const float arena_min_x = -arena_width/2 + robot_diameter;
+const float arena_max_x = arena_width/2 - robot_diameter;
+const float arena_min_y = -arena_width/2 + robot_diameter;
+const float arena_max_y = arena_width/2 - robot_diameter;
 
 Zumo32U4LCD lcd;
 Zumo32U4ButtonA buttonA;
@@ -132,16 +132,17 @@ public:
 } pose;
 
 
-const int line_count=5;
+#define line_sensor_count 3
+
 void setup()
 {
   lcd.print("setup");
   config.load();
   proximity_sensors.initThreeSensors();
 
-  line_sensors.initThreeSensors();
+  //line_sensors.initFiveSensors();
 
-  //line_sensors.initThreeSensors();
+  line_sensors.initThreeSensors();
   encoders.init();
   turn_sensor.init();
   turn_sensor.reset();
@@ -300,6 +301,13 @@ public:
     mode = turning_before_move;
   }
 
+  float get_goal_x() {
+    return this->goal_x;
+  }
+  float get_goal_y() {
+    return this->goal_y;
+  }
+
   void set_yaw_goal(float goal_yaw) {
     this->goal_yaw = goal_yaw;
     mode = turning;
@@ -387,20 +395,27 @@ void loop()
   // sense  
   turn_sensor.update();
 
-  unsigned int line_readings[line_count];
+  unsigned int line_readings[line_sensor_count];
   line_sensors.read(line_readings);
 
 
-  proximity_sensors.read(); 
+  proximity_sensors.read();
   {
     uint8_t left = proximity_sensors.countsFrontWithLeftLeds();
     uint8_t right = proximity_sensors.countsFrontWithRightLeds();
+    if(every_n_ms(last_loop_ms, loop_ms, 1000)){
+      Serial.print("Proximity L: ");
+      Serial.print(left);
+      Serial.print("R: ");
+      Serial.print(right);
+      Serial.println();
+    }
 
     uint8_t sum = left+right;
     int8_t diff = right-left;
 
 
-    if(sum<4) {
+    if(sum<1) {
       obstacle_status = no_obstacle;
     } else {
       if (diff < 0) {
@@ -415,18 +430,40 @@ void loop()
   pose.update();
 
   // only left and center lines work,  
-  bool left_line_sensed = line_readings[0] > 400;
-  bool center_line_sensed = line_readings[1] > 400;
+  bool left_line_sensed = line_readings[0] > 600;
+  bool center_line_sensed = line_readings[1] > 600;
+  bool right_line_sensed  = line_readings[2] > 600;
   if(left_line_sensed) {
     buzzer.playNote(55,100,13);
   }
   if(center_line_sensed) {
-    buzzer.playNote(60,100,13);
+    buzzer.playNote(59,100,13);
   }
+
+  if(right_line_sensed) {
+    buzzer.playNote(62,100,13);
+  }
+
+  bool line_detected = left_line_sensed || center_line_sensed || right_line_sensed;
+  if (line_detected) {
+    if(fabs(pose.x) > fabs(pose.y)) {
+      pose.x = pose.x < 0 ? arena_min_x : arena_max_x;
+    } else {
+      pose.y = pose.y < 0 ? arena_min_y : arena_max_y;
+    }
+  }
+
 
   if(look_for_targets && (obstacle_status != no_obstacle)) {
     loop_mode = chasing;
+    buzzer.playNote(61,100,15); // tri-tone
   }
+
+  // stop everything and rush to center if we see a line, probably chasing a spectator
+  if(line_detected && loop_mode!= start && loop_mode != rush_to_center) {
+    loop_mode = start;
+  }
+
   switch(loop_mode) {
     case start:
       look_for_targets = false;
@@ -454,6 +491,7 @@ void loop()
     
     case sweep_scan:
       if(robot.mode == RobotController::Mode::idle)  {
+        robot.set_position_goal(random_float(arena_min_x,arena_max_x),random_float(arena_min_y,arena_max_y));
         loop_mode = moving_to_point;
       }
       break;
@@ -476,10 +514,20 @@ void loop()
   if(every_n_ms(last_loop_ms, loop_ms, 1000)) {
     Serial.print("loop count: ");
     Serial.print(loop_count);
+    /*
     Serial.print(" down sensors L:");
     Serial.print(line_readings[0]);
     Serial.print(" C:");
     Serial.print(line_readings[1]);
+    */
+    Serial.print("line readings:");
+    for(int i =0;i<line_sensor_count;i++) {
+      Serial.print(" [");
+      Serial.print(i);
+      Serial.print("]:");
+      Serial.print(line_readings[i]);
+      Serial.print("");
+    }
 
     Serial.println();
   }
