@@ -493,6 +493,15 @@ void loop()
     loop_mode = start;
   }
 
+  struct XY {
+    XY(float x, float y) : x(x), y(y){}
+      float x=NAN; 
+      float y=NAN;
+    };
+  const XY arena_corners[] = {{arena_max_x, arena_min_y}, {arena_max_x, arena_max_y}, {arena_min_x, arena_max_y}, {arena_min_x, arena_min_y}};
+  static uint8_t corner_index = 0;
+
+
   switch(loop_mode) {
     case start:
       look_for_targets = false;
@@ -508,8 +517,13 @@ void loop()
     
     case hide_in_corner:
       if(robot.is_idle() && obstacle_status != ObstacleStatus::no_obstacle) {
+        if(obstacle_status == obstacle_left) {
+          corner_index = (corner_index==3) ? 0 : corner_index + 1;
+        } else {
+          corner_index = (corner_index==0) ? 3 : corner_index - 1;
+        }
         loop_mode = hide_rush_to_corner;
-        robot.set_position_goal(arena_max_x, arena_max_y);
+        robot.set_position_goal(arena_corners[corner_index].x, arena_corners[corner_index].y);
       }
       break;
 
