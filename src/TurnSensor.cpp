@@ -43,7 +43,7 @@ void TurnSensor::calibrate()
 
   // Calibrate the gyro.
   int32_t total = 0;
-  const unsigned long cal_millis = 10000;
+  const unsigned long cal_millis = 3000;
   unsigned long cal_start = millis();
   unsigned long n_samples = 0;
   while(millis() - cal_start < cal_millis)

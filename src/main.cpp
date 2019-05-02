@@ -164,8 +164,16 @@ bool every_n_ms(unsigned long last_loop_ms, unsigned long loop_ms, unsigned long
 }
 
 
+// returns theta between -PI and PI
+// optimized for small theta
 double standardized_radians(double theta) {
-  return fmod((theta + 3 * M_PI), 2*M_PI) - M_PI;
+  while(theta < - M_PI) {
+    theta += 2*M_PI;
+  }
+  while(theta > M_PI) {
+    theta  -= 2 * M_PI;
+  }
+  return theta;
 }
 
 class RobotController {
@@ -175,9 +183,8 @@ private:
   float start_x = NAN; // where we started for current goal
   float start_y = NAN;
   float goal_yaw = NAN;
-  float goal_distance = NAN;
 
-  const float max_speed = 100;
+  const float max_speed = 400;
   const float min_speed = 100;
   const float goal_tolerance_meters = 0.03;
   const float turn_angle_tolerance = 5 * M_PI / 180;
@@ -188,20 +195,11 @@ private:
     float theta;
   };
 
-  void calculate_goal_yaw_and_distance() {
-    float dx = goal_x - pose.x;
-    float dy = goal_y - pose.y;
-    goal_distance = sqrt(dx*dx+dy*dy);
-    goal_yaw =  atan2(dy,dx);
-  }
-
   bool turn_is_complete() {
     return 
         fabs(pose.get_yaw_radians_per_second()) < zero_angle_velocity_tolerance 
         && fabs(pose.get_yaw_radians() - goal_yaw) < turn_angle_tolerance;
   }
-
-  
 
   void execute_move() {
 
@@ -214,7 +212,10 @@ private:
     float progress = (drx * dx + dry * dy)/(dx * dx + dy * dy);
     float cte = (drx * dy - dry * dx ) / l;
 
-    calculate_goal_yaw_and_distance();
+    float dgx = goal_x - pose.x;
+    float dgy = goal_y - pose.y;
+    float goal_distance = sqrt(dgx*dgx+dgy*dgy);
+
 
 
     if(goal_distance < goal_tolerance_meters || progress >= 1) {
@@ -224,17 +225,19 @@ private:
     }
 
 
-    float k_p = 30000;
+    float k_p = 5000;
     float k_d = 1000;
+    float k_w =  50;
 
     float yaw_error = standardized_radians(goal_yaw - pose.get_yaw_radians());
+    float w_error = -turn_sensor.get_yaw_radians_per_second();
 
-    float adjust = k_p * cte + k_d * yaw_error;
+    float adjust = k_p * cte + k_d * yaw_error + k_w * w_error;
 
-    double speed_setpoint = min_speed+goal_distance * max_speed / 0.15; // max speed at 5 cm
+    double speed_setpoint = constrain(goal_distance * max_speed / 0.15, min_speed, max_speed); // max speed at 5 cm
 
-    int left_speed = constrain(speed_setpoint - adjust, -max_speed,max_speed);
-    int right_speed = constrain(speed_setpoint + adjust, -max_speed,max_speed);
+    int left_speed = constrain(speed_setpoint - adjust, -max_speed/2,max_speed);
+    int right_speed = constrain(speed_setpoint + adjust, -max_speed/2,max_speed);
     
     motors.setSpeeds(left_speed, right_speed);
 
@@ -276,6 +279,7 @@ private:
     motors.setSpeeds(0, 0);
 
   }
+  
 
 public:
   enum Mode {
@@ -297,7 +301,7 @@ public:
     if(dx==0 && dy==0) {
       return pose.get_yaw_radians();
     }
-    return  atan2(dy,dx);
+    return standardized_radians(atan2(dy,dx) - pose.get_yaw_radians()) + pose.get_yaw_radians();
   }
 
   void chase(int8_t direction) {
@@ -317,6 +321,7 @@ public:
     this->goal_y = goal_y;
     this->start_x = pose.x;
     this->start_y = pose.y;
+    goal_yaw = direction_to(goal_x, goal_y);
     mode = turning_before_move;
   }
 
@@ -332,20 +337,26 @@ public:
     mode = turning;
   }
 
+  void point_to_xy(float x, float y) {
+    float dx = x - pose.x;
+    float dy = y - pose.y;
+    set_yaw_goal( standardized_radians(atan2(dy,dx) - pose.get_yaw_radians()) + pose.get_yaw_radians() );
+    mode = turning;
+  }
+
   void execute() {
 
     if(mode == moving) {
       execute_move();
     } else if (mode == turning) {
       execute_turn();
-      //calculate_goal_yaw_and_distance();
       lcd.clear();
       lcd.print(goal_yaw - pose.get_yaw_radians());
       if(turn_is_complete()) {
         mode = idle;
       }
     } else if (mode == turning_before_move) {
-      calculate_goal_yaw_and_distance();
+      //calculate_goal_yaw_and_distance();
       if(turn_is_complete()) {
         // buzzer.playNote(57, 500, 10);
         mode = moving;
@@ -462,16 +473,6 @@ void loop()
   bool left_line_sensed = line_readings[0] > 600;
   bool center_line_sensed = line_readings[1] > 600;
   bool right_line_sensed  = line_readings[2] > 600;
-  if(left_line_sensed) {
-    buzzer.playNote(55,100,13);
-  }
-  if(center_line_sensed) {
-    buzzer.playNote(59,100,13);
-  }
-
-  if(right_line_sensed) {
-    buzzer.playNote(62,100,13);
-  }
 
   bool line_detected = left_line_sensed || center_line_sensed || right_line_sensed;
   if (line_detected) {
@@ -510,7 +511,7 @@ void loop()
         loop_mode = rush_to_center;
       }
       if(role==hider) {
-        robot.set_yaw_goal(robot.direction_to(0,0));
+        robot.point_to_xy(0,0);
         loop_mode = hide_in_corner;
       }
       break;
@@ -529,7 +530,7 @@ void loop()
 
     case hide_rush_to_corner:
       if(robot.is_idle()) {
-        robot.set_yaw_goal(robot.direction_to(0,0));
+        robot.point_to_xy(0,0);
         loop_mode = hide_in_corner;
       }
       break;
