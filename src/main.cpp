@@ -4,6 +4,9 @@
 #include <Wire.h>
 #include <Zumo32U4.h>
 #include "TurnSensor.h"
+#include "geometry.h"
+
+#define dads_car
 
 const float feet_to_meters = 0.3048;
 const float arena_width = 3 * feet_to_meters;
@@ -74,7 +77,11 @@ class Pose {
 public:
   void update() {
     float yaw_radians = turn_sensor.get_yaw_radians();
+#ifdef dads_car    
+      const float meters_per_encoder_tick = 280./2112000 * 75./50.;
+#else
       const float meters_per_encoder_tick = 280./2112000;
+#endif
     float ds = (encoders.getCountsAndResetLeft()+encoders.getCountsAndResetRight())*meters_per_encoder_tick/2;
     if(ds!=0) {
       this->x += ds * cos(yaw_radians);
@@ -187,8 +194,8 @@ private:
   const float max_speed = 400;
   const float min_speed = 100;
   const float goal_tolerance_meters = 0.03;
-  const float turn_angle_tolerance = 5 * M_PI / 180;
-  const float zero_angle_velocity_tolerance = 20 * M_PI / 180;
+  const float turn_angle_tolerance = 10 * M_PI / 180;
+  const float zero_angle_velocity_tolerance = 40 * M_PI / 180;
 
   struct R_Theta {
     float r;
@@ -225,9 +232,9 @@ private:
     }
 
 
-    float k_p = 5000;
+    float k_p = 2000;
     float k_d = 1000;
-    float k_w =  50;
+    float k_w =  30; // angular velocity
 
     float yaw_error = standardized_radians(goal_yaw - pose.get_yaw_radians());
     float w_error = -turn_sensor.get_yaw_radians_per_second();
@@ -240,24 +247,10 @@ private:
     int right_speed = constrain(speed_setpoint + adjust, -max_speed/2,max_speed);
     
     motors.setSpeeds(left_speed, right_speed);
-
-    /*
-
-    double yaw_setpoint = goal_yaw;
-    double speed_setpoint = min_speed+goal_distance * max_speed / 0.15; // max speed at 5 cm
-
-    double yaw_error = standardized_radians(yaw_setpoint - pose.get_yaw_radians());
-
-    int left_speed = constrain(speed_setpoint - 5000 * yaw_error,-max_speed,max_speed);
-    int right_speed = constrain(speed_setpoint + 5000 * yaw_error,-max_speed,max_speed);
-    
-    motors.setSpeeds(left_speed, right_speed);
-    // buzzer.playNote(57, 500, 10);
-    */
   }
 
   void execute_turn() {
-    float p = 500;
+    float p = 300;
     float d = 30;
     float yaw_radians = pose.get_yaw_radians();
 
@@ -265,12 +258,6 @@ private:
     float d_error = -pose.get_yaw_radians_per_second();
     float turnSpeed = p*p_error+d*d_error;
     turnSpeed = constrain(turnSpeed, -max_speed, max_speed);
-    /*
-    lcd.clear();
-    lcd.print(yaw_radians);
-    lcd.gotoXY(0,1);
-    lcd.print(goal_yaw);
-    */
 
     motors.setSpeeds(-turnSpeed, turnSpeed);
   }
