@@ -1,10 +1,10 @@
 #include <EEPROM.h>
 
+#include "geometry.h"
 #include <Arduino.h>
 #include <Wire.h>
 #include <Zumo32U4.h>
 #include "TurnSensor.h"
-#include "geometry.h"
 
 #define dads_car
 
